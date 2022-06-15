@@ -1,0 +1,83 @@
+ WITH dasher_del as 
+(SELECT 
+  d.DASHER_ID,
+  TRIM(a.EMAIL) AS EMAIL,
+  d.ACTUAL_DELIVERY_TIME_LOCAL ,
+  d.ACTIVE_DATE_UTC  ,
+  d.DELIVERY_ID,
+  STORE_STARTING_POINT_ID as SP_ID, COUNT(*) AS Number_of_times_visited,
+  sp.name AS SP_NAME, 
+  ROW_NUMBER() OVER(PARTITION BY d.DASHER_ID ORDER BY d.ACTUAL_DELIVERY_TIME_LOCAL ASC) AS DATE_ORDER 
+
+FROM 
+  public.dimension_deliveries d 
+  JOIN dimension_users a on a.dasher_id = d.DASHER_ID 
+  JOIN geo_intelligence.public.maindb_starting_point sp ON sp.id = d.store_starting_point_id 
+WHERE 
+  a.EMAIL NOT LIKE '%@forgotten.doordash.com' 
+  and a.email <>''
+and a.first_name !='Righttoforget' 
+and a.email not like '%doordash.com' -- employees
+and a.email not like '%crometrics.com' -- test emails
+and a.email not like '%ext.dashcorps.com' -- courier emails
+and a.email not like '%dashcorps.com'
+AND a.EMAIL IS NOT NULL 
+and d.ACTIVE_DATE_UTC BETWEEN '2021-06-01' AND getdate()
+---AND d.DASHER_ID in (12092911,13505701,7768199)
+GROUP BY 1,2,3,4,5,6,8
+ ) ,
+
+--getting details for first order  
+first_dtl as (
+  SELECT DISTINCT(D.DASHER_ID),SP_ID AS FIRST_SP_ID, SP_NAME AS FIRST_SP_NAME
+  FROM dasher_del D
+  WHERE DATE_ORDER = 1
+  GROUP BY 1,2,3
+  ORDER BY 1
+),
+ --row for last or most recent order 
+last_order as (
+  SELECT DISTINCT(DASHER_ID),MAX(DATE_ORDER) AS LAST_ORDER
+    FROM dasher_del
+    GROUP BY 1
+    ORDER BY 1) ,
+---details for last order    
+last_dtl as (
+  SELECT DISTINCT(D.DASHER_ID),SP_ID AS LAST_SP_ID, SP_NAME AS LAST_SP_NAME
+  FROM dasher_del D
+  JOIN last_order L on D.DASHER_ID = L.DASHER_ID AND D.DATE_ORDER = L.LAST_ORDER
+  ORDER BY 1
+ ),
+ --summing up visits PER SP
+visits as ( 
+  SELECT DISTINCT(DASHER_ID), 
+  SP_ID, 
+  SP_NAME, SUM(Number_of_times_visited) AS MOST_FREQUENT_LOCATION ,
+  ROW_NUMBER() OVER(PARTITION BY DASHER_ID ORDER BY MOST_FREQUENT_LOCATION  ASC) AS VISIT_ORDER
+                
+                FROM dasher_del
+                GROUP BY 1,2,3
+                ORDER BY 1,2) ,
+ ---getting most frequently visited sp               
+most_visit as(
+ SELECT DISTINCT(DASHER_ID), MAX(VISIT_ORDER) AS LAST_VISIT_ORDER
+                               FROM visits
+                               GROUP BY 1
+  ORDER BY 1) ,
+  ---getting most frequently visited sp  details                              
+ most_freq as (
+   SELECT A.DASHER_ID, SP_ID, SP_NAME, (MOST_FREQUENT_LOCATION) AS NUMBER_OF_VISITS --, MAX(VISIT_ORDER)
+   FROM visits A
+   JOIN most_visit B on A.DASHER_ID = B.DASHER_ID AND A.VISIT_ORDER = B.LAST_VISIT_ORDER
+   GROUP BY 1,2,3,4
+   ORDER BY 1 )
+--non_dup_output as (
+SELECT DISTINCT(D.DASHER_ID), EMAIL, 
+FIRST_SP_ID, FIRST_SP_NAME ,
+LAST_SP_ID, LAST_SP_NAME ,
+V.SP_ID as MOST_FREQ_SP_ID,  V.SP_NAME AS MOST_FREQ_SP_NAME, V.NUMBER_OF_VISITS AS MOST_FREQ_SP_VISITS
+FROM dasher_del D
+JOIN first_dtl F ON D.DASHER_ID = F.DASHER_ID ---AND D.DATE_ORDER = F.FIRST_ORDER
+JOIN last_dtl L ON D.DASHER_ID = L.DASHER_ID ---AND D.DATE_ORDER = L.LAST_ORDER
+JOIN most_freq V ON D.DASHER_ID = V.DASHER_ID --AND D.SP_ID = V.SP_ID
+GROUP BY 1, 2,3,4,5,6,7,8,9 
