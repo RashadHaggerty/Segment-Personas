@@ -1,0 +1,38 @@
+with a as (
+select distinct d.creator_id, u.email, a.delivery_id, d.store_id , a.active_date as defect_order_date
+    , count(distinct case when defect_category = 'Missing and incorrect' then DEFECT_ID end) as MI
+    , count(distinct case when defect_category = 'Lateness(20 min and reported)' then DEFECT_ID end) as Lateness
+    , count(distinct case when defect_category = 'Cancellation' then DEFECT_ID end) as Cancel
+    , count(distinct case when defect_category = 'Food never delivered' then DEFECT_ID end) as ND
+    , count(distinct case when defect_category = 'Poor food quality' then DEFECT_ID end) as Food 
+    , count(distinct DEFECT_ID||defect_category) as defects
+    , listagg(distinct defect_category,', ') as defect_reason
+    , row_number() over (partition by creator_id order by defect_order_date desc) as recent_bad_deliv
+from proddb.public.fact_delivery_defect_metrics a 
+join proddb.public.dimension_deliveries d on a.delivery_id = d.delivery_id and is_caviar = 1 
+        and d.active_Date >= '2020-08-24'
+join proddb.public.dimension_users u on u.consumer_id = d.creator_id and lower(experience) = 'caviar'
+where defect_audience = 'Consumer'
+    and defect_category in (
+        'Missing and incorrect', 
+        'Lateness(20 min and reported)',
+        'Cancellation',
+        'Food never delivered',
+        'Dx/Cx interaction', 
+        'Poor food quality',
+        'Missed/dropped',
+        'WiMO'
+        )
+  and is_filtered_core = 1
+  and is_caviar = 1 
+group by 1,2,3,4,5 
+)
+select
+email
+, store_id as "personas_baddelivery_storeid"
+, defect_order_date as "personas_baddelivery_date" 
+, defect_reason as "personas_baddelivery_reason"
+from a 
+where email not ilike '%forgotten.doordash.com%'
+qualify row_number() over (partition by creator_id order by defect_order_date desc) = 1
+order by email;
