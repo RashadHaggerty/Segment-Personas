@@ -1,0 +1,53 @@
+with profile_ids as (SELECT
+  *
+FROM
+    proddb.public.dimension_iterable_doordash_consumer_profile_diff
+WHERE
+  attr_name IN ('consumer_id')
+  AND last_updated_at > '2020-06-01'
+ORDER BY
+  email,
+  last_updated_at ),
+MULTIS AS (
+SELECT DISTINCT(ATTR_VALUE) AS PROFILE_ID ,
+       COUNT(*) AS NUM_OF_PROF_CHGS
+       FROM profile_ids
+       GROUP BY ATTR_VALUE
+       HAVING COUNT(*) > 1),
+profile_ids_2 as (
+SELECT * FROM profile_ids where attr_value in (SELECT DISTINCT(PROFILE_ID) FROM MULTIS)),      
+    
+     CUSTOMERS as (  
+ SELECT
+    DISTINCT(del.CREATOR_ID) AS CONSUMER_ID,
+    TRIM(consumer.EMAIL) AS EMAIL,
+    --DATE_JOINED,
+    COUNT(DISTINCT CASE WHEN DATEDIFF(day,del.CREATED_AT,GETDATE()) between 0 and 30 THEN STORE_ID END) AS PERSONAS_LAST_30D_DIFF_MERCHANTS_SHOPPED
+    --ROW_NUMBER() OVER (PARTITION BY del.CREATOR_ID ORDER BY DATE_JOINED DESC) as most_recent
+  FROM
+    dimension_deliveries del
+   JOIN dimension_users consumer ON del.creator_id = consumer.consumer_id
+  WHERE
+       DATEDIFF(day,del.CREATED_AT,GETDATE()) between 0 and 30
+   and  email NOT LIKE '%@forgotten.doordash.com'
+    AND email  <> ''
+    AND email not like  '%Righttoforget%'
+    AND email not LIKE '%doordash.com' -- employees
+    AND email not LIKE '%crometrics.com' -- test emails
+    AND email not LIKE '%ext.dashcorps.com' -- courier emails
+    AND email not LIKE '%dashcorps.com'
+    AND email not  LIKE '%@example.com'
+    AND EMAIL IS NOT NULL ---
+    AND LOWER(experience) IN ('doordash')
+    --qualify most_recent = 1     
+GROUP BY 1,2
+  ORDER BY 1,2,3 )
+  
+  SELECT DISTINCT(EMAIL) AS EMAIL,
+    PERSONAS_LAST_30D_DIFF_MERCHANTS_SHOPPED
+  FROM 
+    CUSTOMERS c
+    where email  not in (select distinct(email) from profile_ids_2) 
+    and email != 'sfreception@mto.com'
+    and PERSONAS_LAST_30D_DIFF_MERCHANTS_SHOPPED >1
+    
